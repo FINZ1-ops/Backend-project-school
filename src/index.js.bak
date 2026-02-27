@@ -1,0 +1,65 @@
+const express = require("express");
+const pool = require("./db/pool");
+const verifyToken = require("./middleware/verifyToken");
+const verifyRole = require("./middleware/verifyRole");
+const swaggerDocs = require("./swagger");
+
+// Routers
+const authRouter = require("./route/auth");
+const categoriesRouter = require("./route/categories");
+const productsRouter = require("./route/products");
+const stocksRouter = require("./route/stocks");
+const transactionsRouter = require("./route/transactions");
+const ordersRouter = require("./route/orders");
+const usersRouter = require("./route/users");
+
+const app = express();
+app.use(express.json());
+
+// Auth tidak perlu token
+app.use("/auth", authRouter);
+swaggerDocs(app);
+
+// Admin only
+app.use("/categories", verifyToken, verifyRole(['admin']), categoriesRouter);
+app.use("/products", verifyToken, verifyRole(['admin']), productsRouter);
+app.use("/users", verifyToken, verifyRole(["admin"]), usersRouter);
+
+
+// Kasir only
+app.use("/transactions", verifyToken, verifyRole(['cashier', 'admin']), transactionsRouter);
+app.use("/orders", verifyToken, verifyRole(['cashier', 'admin']), ordersRouter);
+app.use("/stocks", verifyToken, verifyRole(['cashier', 'admin']), stocksRouter);
+
+app.get("/", (req, res) => {
+  res.json({ message: "API Toko Online ready " });
+});
+
+// Jika route tidak ditemukan
+app.use((req, res) => {
+  res.status(404).json({
+    status: "error",
+    message: "Endpoint tidak ditemukan"
+  });
+});
+
+// Error handler global
+app.use((err, req, res, next) => {
+  console.error(" Unexpected error:", err);
+  res.status(500).json({
+    status: "error",
+    message: "Terjadi kesalahan pada server"
+  });
+});
+
+const PORT = process.env.APP_PORT || 3000;
+
+pool.connect()
+  .then(() => {
+    console.log("✅ Database connected successfully");
+    app.listen(PORT, () => console.log(` Server running at http://localhost:${PORT}`));
+  })
+  .catch(err => {
+    console.error(" Failed to connect to database:", err.message);
+    process.exit(1);
+  });
