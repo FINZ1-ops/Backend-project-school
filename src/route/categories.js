@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("../db/pool");
+const verifyRole = require("../middleware/verifyRole");
 const router = express.Router();
 
 // ✅ GET semua kategori
@@ -16,7 +17,7 @@ const router = express.Router();
  *         description: Server error
  */
 
-router.get("/", async (_req, res) => {
+router.get("/", verifyRole(["admin","cashier"]), async (_req, res) => {
   try {
     const result = await pool.query("SELECT * FROM categories ORDER BY id ASC");
     res.status(200).json({
@@ -49,7 +50,7 @@ router.get("/", async (_req, res) => {
  *       500:
  *         description: Server error
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", verifyRole(["admin","cashier"]), async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query("SELECT * FROM categories WHERE id = $1", [id]);
@@ -96,7 +97,7 @@ router.get("/:id", async (req, res) => {
  *         description: Server error
  */
 
-router.post("/", async (req, res) => {
+router.post("/", verifyRole(["admin"]), async (req, res) => {
   const { name, description } = req.body;
 
   if (!name) {
@@ -155,7 +156,7 @@ router.post("/", async (req, res) => {
  *         description: Server error
  */
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", verifyRole(["admin"]), async (req, res) => {
   const { id } = req.params;
   const { name, description } = req.body;
 
@@ -204,7 +205,7 @@ router.put("/:id", async (req, res) => {
  *         description: Server error
  */
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", verifyRole(["admin"]), async (req, res) => {
   const { id } = req.params;
 
   try {

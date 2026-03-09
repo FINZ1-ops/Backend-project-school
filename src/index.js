@@ -2,17 +2,16 @@ const express = require("express");
 const cors = require("cors");
 const pool = require("./db/pool");
 const verifyToken = require("./middleware/verifyToken");
-const verifyRole = require("./middleware/verifyRole");
 const swaggerDocs = require("./swagger");
 
 // Routers
-const authRouter = require("./route/auth");
-const categoriesRouter = require("./route/categories");
-const productsRouter = require("./route/products");
-const stocksRouter = require("./route/stocks");
+const authRouter         = require("./route/auth");
+const categoriesRouter   = require("./route/categories");
+const productsRouter     = require("./route/products");
+const stocksRouter       = require("./route/stocks");
 const transactionsRouter = require("./route/transactions");
-const ordersRouter = require("./route/orders");
-const usersRouter = require("./route/users");
+const ordersRouter       = require("./route/orders");
+const usersRouter        = require("./route/users");
 
 const app = express();
 
@@ -23,39 +22,32 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Auth tidak perlu token
+// Auth — tidak perlu token
 app.use("/auth", authRouter);
 swaggerDocs(app);
 
-// Admin only
-app.use("/categories", verifyToken, verifyRole(["admin"]), categoriesRouter);
-app.use("/products", verifyToken, verifyRole(["admin"]), productsRouter);
-app.use("/users", verifyToken, verifyRole(["admin"]), usersRouter);
+// Semua route wajib login (verifyToken)
+// Role check sudah dipasang di dalam masing-masing router
+app.use("/categories",   verifyToken, categoriesRouter);
+app.use("/products",     verifyToken, productsRouter);
+app.use("/users",        verifyToken, usersRouter);
+app.use("/transactions", verifyToken, transactionsRouter);
+app.use("/orders",       verifyToken, ordersRouter);
+app.use("/stocks",       verifyToken, stocksRouter);
 
-// Kasir only
-app.use("/transactions", verifyToken, verifyRole(["cashier", "admin"]), transactionsRouter);
-app.use("/orders", verifyToken, verifyRole(["cashier", "admin"]), ordersRouter);
-app.use("/stocks", verifyToken, verifyRole(["cashier", "admin"]), stocksRouter);
-
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.json({ message: "API Toko Online ready ✦" });
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    status: "error",
-    message: "Endpoint tidak ditemukan",
-  });
+  res.status(404).json({ status: "error", message: "Endpoint tidak ditemukan" });
 });
 
 // Global error handler
-app.use((err, req, res, next) => {
+app.use((err, _req, res, _next) => {
   console.error("Unexpected error:", err);
-  res.status(500).json({
-    status: "error",
-    message: "Terjadi kesalahan pada server",
-  });
+  res.status(500).json({ status: "error", message: "Terjadi kesalahan pada server" });
 });
 
 const PORT = process.env.APP_PORT || 3000;

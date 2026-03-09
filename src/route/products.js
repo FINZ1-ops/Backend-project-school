@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db/pool');
+const verifyRole = require('../middleware/verifyRole');
 
 const ALLOWED_TYPES = ['clothing', 'accessory'];
 
 function validateProductInput(body) {
-  const { name, price, size, color, category } = body;
-  if (!name || !size || !color || !category || price == null) return 'Semua field wajib diisi';
+  const { id, name, price, size, color, category } = body;
+  if (!id || !name || !size || !color || !category || price == null) return 'Semua field wajib diisi';
   if (!ALLOWED_TYPES.includes(category)) return 'category harus "clothing" atau "accessory"';
   if (isNaN(price) || price < 0) return 'price harus angka valid dan tidak negatif';
   return null;
@@ -32,7 +33,7 @@ function validateProductInput(body) {
  *         description: Server error
  */
 
-router.get('/', async (req, res) => {
+router.get('/', verifyRole(["admin","cashier"]), async (req, res) => {
   const { available } = req.query;
   let q = `SELECT id, name, price, size, color, category, available FROM products`;
   const values = [];
@@ -71,7 +72,7 @@ router.get('/', async (req, res) => {
  *         description: Server error
  */
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyRole(["admin","cashier"]), async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM products WHERE id = $1', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Produk tidak ditemukan' });
@@ -123,7 +124,7 @@ router.get('/:id', async (req, res) => {
  */
 
 
-router.post('/', async (req, res) => {
+router.post('/', verifyRole(["admin"]), async (req, res) => {
   const err = validateProductInput(req.body);
   if (err) return res.status(400).json({ error: err });
 
@@ -196,7 +197,7 @@ router.post('/', async (req, res) => {
 
 
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyRole(["admin"]), async (req, res) => {
   const err = validateProductInput(req.body);
   if (err) return res.status(400).json({ error: err });
 
@@ -239,7 +240,7 @@ router.put('/:id', async (req, res) => {
  *         description: Server error
  */
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyRole(["admin"]), async (req, res) => {
   try {
     const { rows } = await pool.query('DELETE FROM products WHERE id = $1 RETURNING *', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Produk tidak ditemukan' });

@@ -9,6 +9,12 @@ const pool = require("../db/pool");
  *   description: Manajemen riwayat stok
  */
 
+const ALLOWED_ACTIONS = ["masuk", "keluar"];
+
+// =====================================================================
+// GET /stocks
+// Ambil semua riwayat stok beserta nama produk
+// =====================================================================
 /**
  * @swagger
  * /stocks:
@@ -18,11 +24,13 @@ const pool = require("../db/pool");
  *     responses:
  *       200:
  *         description: Berhasil mengambil list riwayat stok
+ *       500:
+ *         description: Server error
  */
 router.get("/", async (_req, res) => {
   try {
     const result = await pool.query(
-      `SELECT s.*, p.name AS product_name
+      `SELECT s.*, p.name AS product_name, p.stock AS stock_sekarang
        FROM stocks s
        JOIN products p ON s.product_id = p.id
        ORDER BY s.id DESC`
@@ -37,6 +45,10 @@ router.get("/", async (_req, res) => {
   }
 });
 
+// =====================================================================
+// GET /stocks/product/:product_id
+// Ambil riwayat stok berdasarkan produk tertentu
+// =====================================================================
 /**
  * @swagger
  * /stocks/product/{product_id}:
@@ -53,14 +65,22 @@ router.get("/", async (_req, res) => {
  *       200:
  *         description: Berhasil mengambil riwayat stok produk
  *       404:
- *         description: Riwayat stok tidak ditemukan
+ *         description: Produk tidak ditemukan
  *       500:
  *         description: Server error
  */
 router.get("/product/:product_id", async (req, res) => {
   const { product_id } = req.params;
-  
   try {
+    // Cek produk ada
+    const produk = await pool.query(
+      "SELECT id, name, stock FROM products WHERE id = $1",
+      [product_id]
+    );
+    if (produk.rows.length === 0) {
+      return res.status(404).json({ status: "error", message: "Produk tidak ditemukan" });
+    }
+
     const result = await pool.query(
       `SELECT s.*, p.name AS product_name
        FROM stocks s
@@ -72,7 +92,8 @@ router.get("/product/:product_id", async (req, res) => {
 
     res.status(200).json({
       status: "success",
-      total: result.rowCount,
+      product: produk.rows[0],       // info produk + stok sekarang
+      total_riwayat: result.rowCount,
       data: result.rows,
     });
   } catch (err) {
@@ -80,11 +101,25 @@ router.get("/product/:product_id", async (req, res) => {
   }
 });
 
+// =====================================================================
+// POST /stocks
+// Tambah riwayat stok — stok produk otomatis bertambah atau berkurang
+//
+// action "masuk"  → stok produk BERTAMBAH
+// action "keluar" → stok produk BERKURANG (cek stok cukup dulu)
+//
+// Request body:
+// {
+//   "product_id": 1,
+//   "quantity_change": 10,
+//   "action": "masuk"
+// }
+// =====================================================================
 /**
  * @swagger
  * /stocks:
  *   post:
- *     summary: Tambah riwayat stok baru
+ *     summary: Tambah riwayat stok (stok produk otomatis update)
  *     tags: [Stocks]
  *     requestBody:
  *       required: true
@@ -99,53 +134,112 @@ router.get("/product/:product_id", async (req, res) => {
  *             properties:
  *               product_id:
  *                 type: integer
+ *                 example: 1
  *               quantity_change:
  *                 type: integer
+ *                 example: 10
  *               action:
  *                 type: string
+ *                 enum: [masuk, keluar]
  *     responses:
  *       201:
  *         description: Riwayat stok berhasil ditambahkan
  *       400:
- *         description: Semua field wajib diisi
+ *         description: Input tidak valid atau stok tidak cukup
  *       500:
  *         description: Server error
  */
 router.post("/", async (req, res) => {
   const { product_id, quantity_change, action } = req.body;
 
+  // Validasi input
   if (!product_id || !quantity_change || !action) {
     return res.status(400).json({
-      status: "failed",
-      message: "Semua field wajib diisi (product_id, quantity_change, action)",
+      status: "error",
+      message: "product_id, quantity_change, dan action wajib diisi",
+    });
+  }
+  if (!ALLOWED_ACTIONS.includes(action)) {
+    return res.status(400).json({
+      status: "error",
+      message: 'action hanya boleh "masuk" atau "keluar"',
+    });
+  }
+  if (quantity_change <= 0) {
+    return res.status(400).json({
+      status: "error",
+      message: "quantity_change harus lebih dari 0",
     });
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    // Cek produk ada
+    const produkResult = await client.query(
+      "SELECT id, name, stock FROM products WHERE id = $1",
+      [product_id]
+    );
+    if (produkResult.rows.length === 0) {
+      throw new Error("Produk tidak ditemukan");
+    }
+    const produk = produkResult.rows[0];
+
+    // Kalau action "keluar", cek stok cukup
+    if (action === "keluar" && produk.stock < quantity_change) {
+      throw new Error(
+        `Stok produk "${produk.name}" tidak cukup. Stok tersedia: ${produk.stock}`
+      );
+    }
+
+    // Catat riwayat stok
+    const stockResult = await client.query(
       `INSERT INTO stocks (product_id, quantity_change, action)
        VALUES ($1, $2, $3)
        RETURNING *`,
       [product_id, quantity_change, action]
     );
 
-    await pool.query(
-      `UPDATE products
-       SET stock = stock + $1
-       WHERE id = $2`,
+    // Update stok produk
+    // masuk  → tambah stok
+    // keluar → kurangi stok
+    const operator = action === "masuk" ? "+" : "-";
+    await client.query(
+      `UPDATE products SET stock = stock ${operator} $1 WHERE id = $2`,
       [quantity_change, product_id]
     );
 
+    // Ambil stok terbaru setelah update
+    const stokBaru = await client.query(
+      "SELECT stock FROM products WHERE id = $1",
+      [product_id]
+    );
+
+    await client.query("COMMIT");
+
     res.status(201).json({
       status: "success",
-      message: "Riwayat stok berhasil ditambahkan dan stok produk diperbarui",
-      data: result.rows[0],
+      message: `Stok berhasil ${action === "masuk" ? "ditambahkan" : "dikurangi"}`,
+      data: {
+        ...stockResult.rows[0],
+        product_name: produk.name,
+        stok_sebelum: produk.stock,
+        stok_sesudah: stokBaru.rows[0].stock,
+      },
     });
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    await client.query("ROLLBACK");
+    res.status(400).json({ status: "error", message: err.message });
+  } finally {
+    client.release();
   }
 });
 
+// =====================================================================
+// PUT /stocks/:id
+// Update riwayat stok — stok produk disesuaikan ulang
+// =====================================================================
 /**
  * @swagger
  * /stocks/{id}:
@@ -169,6 +263,7 @@ router.post("/", async (req, res) => {
  *                 type: integer
  *               action:
  *                 type: string
+ *                 enum: [masuk, keluar]
  *     responses:
  *       200:
  *         description: Riwayat stok berhasil diperbarui
@@ -181,18 +276,51 @@ router.put("/:id", async (req, res) => {
   const { id } = req.params;
   const { quantity_change, action } = req.body;
 
+  if (action && !ALLOWED_ACTIONS.includes(action)) {
+    return res.status(400).json({
+      status: "error",
+      message: 'action hanya boleh "masuk" atau "keluar"',
+    });
+  }
+
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      `UPDATE stocks
-       SET quantity_change = $1, action = $2
-       WHERE id = $3
-       RETURNING *`,
-      [quantity_change, action, id]
+    await client.query("BEGIN");
+
+    // Ambil data stok lama
+    const stokLama = await client.query(
+      "SELECT * FROM stocks WHERE id = $1",
+      [id]
+    );
+    if (stokLama.rows.length === 0) {
+      throw new Error("Riwayat stok tidak ditemukan");
+    }
+    const lama = stokLama.rows[0];
+
+    // Kembalikan efek stok lama dulu
+    const operatorKembalikan = lama.action === "masuk" ? "-" : "+";
+    await client.query(
+      `UPDATE products SET stock = stock ${operatorKembalikan} $1 WHERE id = $2`,
+      [lama.quantity_change, lama.product_id]
     );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ status: "error", message: "Riwayat stok tidak ditemukan" });
-    }
+    // Update data riwayat stok
+    const newQty    = quantity_change ?? lama.quantity_change;
+    const newAction = action ?? lama.action;
+
+    const result = await client.query(
+      `UPDATE stocks SET quantity_change = $1, action = $2 WHERE id = $3 RETURNING *`,
+      [newQty, newAction, id]
+    );
+
+    // Terapkan efek stok baru
+    const operatorBaru = newAction === "masuk" ? "+" : "-";
+    await client.query(
+      `UPDATE products SET stock = stock ${operatorBaru} $1 WHERE id = $2`,
+      [newQty, lama.product_id]
+    );
+
+    await client.query("COMMIT");
 
     res.status(200).json({
       status: "success",
@@ -200,15 +328,22 @@ router.put("/:id", async (req, res) => {
       data: result.rows[0],
     });
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    await client.query("ROLLBACK");
+    res.status(400).json({ status: "error", message: err.message });
+  } finally {
+    client.release();
   }
 });
 
+// =====================================================================
+// DELETE /stocks/:id
+// Hapus riwayat stok — stok produk dikembalikan ke kondisi sebelumnya
+// =====================================================================
 /**
  * @swagger
  * /stocks/{id}:
  *   delete:
- *     summary: Hapus riwayat stok
+ *     summary: Hapus riwayat stok (stok produk dikembalikan)
  *     tags: [Stocks]
  *     parameters:
  *       - in: path
@@ -226,27 +361,44 @@ router.put("/:id", async (req, res) => {
  */
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
-  
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      `DELETE FROM stocks WHERE id = $1 RETURNING *`,
+    await client.query("BEGIN");
+
+    // Ambil data sebelum dihapus
+    const result = await client.query(
+      "SELECT * FROM stocks WHERE id = $1",
       [id]
     );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        status: "error",
-        message: "Riwayat stok tidak ditemukan",
-      });
+    if (result.rows.length === 0) {
+      throw new Error("Riwayat stok tidak ditemukan");
     }
+    const stok = result.rows[0];
+
+    // Kembalikan stok produk
+    // Kalau dulu "masuk" → sekarang dikurangi balik
+    // Kalau dulu "keluar" → sekarang ditambah balik
+    const operator = stok.action === "masuk" ? "-" : "+";
+    await client.query(
+      `UPDATE products SET stock = stock ${operator} $1 WHERE id = $2`,
+      [stok.quantity_change, stok.product_id]
+    );
+
+    // Hapus riwayat
+    await client.query("DELETE FROM stocks WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
 
     res.status(200).json({
       status: "success",
-      message: "Riwayat stok berhasil dihapus",
-      data: result.rows[0],
+      message: "Riwayat stok dihapus dan stok produk dikembalikan",
+      data: stok,
     });
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    await client.query("ROLLBACK");
+    res.status(400).json({ status: "error", message: err.message });
+  } finally {
+    client.release();
   }
 });
 

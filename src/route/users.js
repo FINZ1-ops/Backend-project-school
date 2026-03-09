@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db/pool");
+const verifyRole = require("../middleware/verifyRole");
 
 // GET semua user
 /**
@@ -14,7 +15,7 @@ const pool = require("../db/pool");
  *         description: Berhasil mengambil list user
  */
 
-router.get("/", async (req, res) => {
+router.get("/", verifyRole(["admin","cashier"]), async (req, res) => {
   try {
     const { rows } = await pool.query(
       "SELECT id, fullname, username, email, phone, address, role, _is_active_disabled FROM users ORDER BY id ASC"
@@ -44,7 +45,7 @@ router.get("/", async (req, res) => {
  *       404:
  *         description: User tidak ditemukan
  */
-router.get("/:id", async (req, res) => {
+router.get("/:id", verifyRole(["admin","cashier"]), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -98,7 +99,7 @@ router.get("/:id", async (req, res) => {
  *         description: User berhasil diupdate
  */
 
-router.put("/:id", async (req, res) => {
+router.put("/:id", verifyRole(["admin"]), async (req, res) => {
   const { id } = req.params;
   const { fullname, username, email, role, _is_active_disabled } = req.body;
 
@@ -153,7 +154,7 @@ router.put("/:id", async (req, res) => {
  *         description: User berhasil dihapus
  */
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", verifyRole(["admin"]), async (req, res) => {
   try {
     const { id } = req.params;
 

@@ -25,7 +25,7 @@ module.exports = function verifyRole(allowedRoles = []) {
 
       const user = result.rows[0];
 
-      // Cek banned
+      // Cek banned — berlaku untuk semua role dan semua method
       if (user._is_active_disabled === true) {
         return res.status(403).json({
           status: "error",
@@ -33,7 +33,12 @@ module.exports = function verifyRole(allowedRoles = []) {
         });
       }
 
-      // Cek akses
+      // Kalau method GET → semua role yang sudah login boleh akses
+      if (req.method === "GET") {
+        return next();
+      }
+
+      // Kalau POST / PUT / DELETE → cek role
       if (!allowedRoles.includes(user.role.toLowerCase())) {
         return res.status(403).json({
           status: "error",

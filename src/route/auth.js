@@ -48,6 +48,11 @@ const router = express.Router();
 router.post("/register", async (req, res) => {
   const { fullname, username, email, password, role } = req.body;
 
+  const ALLOWED_ROLES = ["admin", "cashier","user"];
+    if (!ALLOWED_ROLES.includes(role)) {
+    return res.status(400).json({ status: "error", message: 'Role hanya boleh "admin", "cashier", atau "user"' });
+  }
+
   if (!fullname || !username || !email || !password || !role) {
     return res.status(400).json({
       status: "error",
@@ -184,7 +189,6 @@ router.post("/logout", async (req, res) => {
     let token = req.headers["authorization"];
     if (token && token.startsWith("Bearer ")) {
       token = token.slice(7);
-      const jwt = require("jsonwebtoken");
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         await pool.query("DELETE FROM tokens WHERE user_id = $1", [decoded.id]);
